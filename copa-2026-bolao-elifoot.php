@@ -2,7 +2,7 @@
 /*
 Plugin Name: Bolão Copa 2026 Elifoot
 Description: Bolão da Copa do Mundo 2026 para WordPress, com visual retrô estilo Elifoot 98, participantes ilimitados, ranking ao vivo, resultados e pontuação configurável.
-Version: 2.5.5
+Version: 2.5.6
 Author: Gomes & Bebes
 License: GPLv2 or later
 */
@@ -11,7 +11,12 @@ if (!defined('ABSPATH')) exit;
 
 define('BCE26_PATH', plugin_dir_path(__FILE__));
 define('BCE26_URL', plugin_dir_url(__FILE__));
-define('BCE26_VERSION', '2.5.5');
+define('BCE26_VERSION', '2.5.6');
+
+// Evita fatal error quando outra cópia do plugin (ou plugin legado) já declarou as mesmas funções.
+if (function_exists('bce26_maybe_migrate_participants_phone')) {
+    return;
+}
 
 register_activation_hook(__FILE__, 'bce26_activate');
 
@@ -1070,8 +1075,18 @@ function bce26_shortcode_predictions() {
     $message = '';
     $participant = bce26_current_participant();
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['bce26_account_action']) && isset($_POST['bce26_account_nonce']) && wp_verify_nonce($_POST['bce26_account_nonce'], 'bce26_account_access')) {
+    if (
+        $_SERVER['REQUEST_METHOD'] === 'POST'
+        && !empty($_POST['bce26_account_action'])
+        && isset($_POST['bce26_account_nonce'])
+        && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['bce26_account_nonce'])), 'bce26_account_access')
+    ) {
         $account_action = sanitize_text_field(wp_unslash($_POST['bce26_account_action'] ?? ''));
+        $allowed_account_actions = ['login_user', 'create_user', 'link_logged_user'];
+        if (!in_array($account_action, $allowed_account_actions, true)) {
+            $message = '<div class="bce26-alert bce26-error">Ação de conta inválida.</div>';
+            $account_action = '';
+        }
         $email = sanitize_email(wp_unslash($_POST['bce26_create_email'] ?? ''));
         $password = (string) wp_unslash($_POST['bce26_create_password'] ?? '');
 
@@ -1087,7 +1102,7 @@ function bce26_shortcode_predictions() {
                 $participant = bce26_current_participant();
                 $message = '<div class="bce26-alert bce26-success">Login realizado com sucesso. Seus palpites foram carregados.</div>';
             }
-        } else {
+        } elseif ($account_action === 'create_user' || $account_action === 'link_logged_user') {
             if (!$participant) {
                 $message = '<div class="bce26-alert bce26-error">Salve seus palpites antes de criar o acesso WordPress.</div>';
             } else {
@@ -1103,7 +1118,12 @@ function bce26_shortcode_predictions() {
         }
     }
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST['bce26_account_action']) && isset($_POST['bce26_predictions_nonce']) && wp_verify_nonce($_POST['bce26_predictions_nonce'], 'bce26_save_predictions')) {
+    if (
+        $_SERVER['REQUEST_METHOD'] === 'POST'
+        && empty($_POST['bce26_account_action'])
+        && isset($_POST['bce26_predictions_nonce'])
+        && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['bce26_predictions_nonce'])), 'bce26_save_predictions')
+    ) {
         $telefone_post = bce26_sanitize_phone_with_ddi(wp_unslash($_POST['bce26_ddi'] ?? '55'), wp_unslash($_POST['bce26_phone'] ?? ($_POST['bce26_telefone'] ?? '')));
         $participant = bce26_get_or_create_participant(wp_unslash($_POST['bce26_nome'] ?? ''), $telefone_post);
         if (is_wp_error($participant)) {
@@ -1159,7 +1179,7 @@ function bce26_shortcode_predictions() {
                             <input name="bce26_nome" required value="<?php echo esc_attr($participant->nome ?? ''); ?>" placeholder="Ex: Técnico Gomes">
                         </label>
                         <label class="bce26-field bce26-phone-field">
-                            <span><?php echo esc_html(bce26_text('signup_email_label')); ?></span>
+                            <span><?php echo esc_html(bce26_text('signup_telefone_label')); ?></span>
                             <?php $phone_parts = bce26_phone_parts($participant->telefone ?? ''); ?>
                             <div class="bce26-phone-input-wrap bce26-phone-input-wrap-ddi">
                                 <select
@@ -1395,12 +1415,14 @@ function bce26_admin_participants() {
             <thead><tr><th>Nome</th><th>Telefone</th><th>Conta</th><th>Palpites</th><th>Ações</th></tr></thead>
             <tbody>
             <?php foreach($participants as $p): ?>
+                <?php $form_id = 'bce26-participant-form-' . intval($p->id); ?>
                 <tr>
-                    <form method="post">
-                    <?php wp_nonce_field('bce26_participants'); ?>
-                    <input type="hidden" name="participant_id" value="<?php echo intval($p->id); ?>">
-                    <td><input name="nome" value="<?php echo esc_attr($p->nome); ?>"></td>
-                    <td><input name="telefone" value="<?php echo esc_attr(bce26_format_phone($p->telefone)); ?>" placeholder="+55 (61) 99999-9999"></td>
+                    <td>
+                        <input form="<?php echo esc_attr($form_id); ?>" name="nome" value="<?php echo esc_attr($p->nome); ?>">
+                    </td>
+                    <td>
+                        <input form="<?php echo esc_attr($form_id); ?>" name="telefone" value="<?php echo esc_attr(bce26_format_phone($p->telefone)); ?>" placeholder="+55 (61) 99999-9999">
+                    </td>
                     <td>
                         <?php if (!empty($p->wp_user_id) && ($u = get_user_by('id', intval($p->wp_user_id)))): ?>
                             ✅ <?php echo esc_html($u->user_email); ?>
@@ -1410,10 +1432,13 @@ function bce26_admin_participants() {
                     </td>
                     <td><?php echo intval($p->total_palpites); ?></td>
                     <td>
-                        <button class="button" name="bce26_save_participant" value="1">Salvar</button>
-                        <button class="button button-link-delete" name="bce26_delete_participant" value="1" onclick="return confirm('Excluir participante e palpites?')">Excluir</button>
+                        <form id="<?php echo esc_attr($form_id); ?>" method="post">
+                            <?php wp_nonce_field('bce26_participants'); ?>
+                            <input type="hidden" name="participant_id" value="<?php echo intval($p->id); ?>">
+                            <button class="button" name="bce26_save_participant" value="1">Salvar</button>
+                            <button class="button button-link-delete" name="bce26_delete_participant" value="1" onclick="return confirm('Excluir participante e palpites?')">Excluir</button>
+                        </form>
                     </td>
-                    </form>
                 </tr>
             <?php endforeach; ?>
             </tbody>
