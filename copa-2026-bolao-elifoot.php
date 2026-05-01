@@ -1159,7 +1159,7 @@ function bce26_shortcode_predictions() {
                             <input name="bce26_nome" required value="<?php echo esc_attr($participant->nome ?? ''); ?>" placeholder="Ex: Técnico Gomes">
                         </label>
                         <label class="bce26-field bce26-phone-field">
-                            <span><?php echo esc_html(bce26_text('signup_email_label')); ?></span>
+                            <span><?php echo esc_html(bce26_text('signup_telefone_label')); ?></span>
                             <?php $phone_parts = bce26_phone_parts($participant->telefone ?? ''); ?>
                             <div class="bce26-phone-input-wrap bce26-phone-input-wrap-ddi">
                                 <select
